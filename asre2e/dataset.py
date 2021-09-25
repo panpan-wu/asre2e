@@ -2,25 +2,41 @@ import csv
 from typing import Callable
 from typing import Tuple
 
-import torchaudio
 import torch
 from torch import Tensor
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
+
+import torchaudio
 from torchaudio.compliance import kaldi
 
 
 class AudioTransformer:
 
+    def __init__(
+        self,
+        num_mel_bins: int = 80,
+        frame_length: int = 25,
+        frame_shift: int = 10,
+        dither: float = 0.1,
+        energy_floor: float = 0.0,
+    ):
+        self.num_mel_bins = num_mel_bins
+        self.frame_length = frame_length
+        self.frame_shift = frame_shift
+        self.dither = dither
+        self.energy_floor = energy_floor
+
     def __call__(self, audio_file: str) -> Tensor:
         waveform, sample_rate = torchaudio.load(audio_file)
+        waveform = waveform * (1 << 15)
         fbank = kaldi.fbank(
             waveform,
-            num_mel_bins=80,
-            frame_length=25,
-            frame_shift=10,
-            dither=0.1,
-            energy_floor=0.0,
+            num_mel_bins=self.num_mel_bins,
+            frame_length=self.frame_length,
+            frame_shift=self.frame_shift,
+            dither=self.dither,
+            energy_floor=self.energy_floor,
             sample_frequency=sample_rate)
         return fbank
 
@@ -43,12 +59,12 @@ class AudioDataset(Dataset):
     ):
         """
         Args:
-            data_file: csv 格式的数据文件。
+            data_file (str): csv 格式的数据文件。
                 格式： utterance_id,audio_file,transcript,char_ids,num_frames
-            batch_size: batch 大小。
-            transformer: 处理单个语音文件。
+            batch_size (int): batch 大小。
+            transformer (Callable): 处理单个语音文件。
                 参数：语音文件路径。
-            target_transformer: 处理单个翻译文本。
+            target_transformer (Callable): 处理单个翻译文本。
                 参数：翻译文本的字符编号串，例如："34 27 1032 46"
         """
         self._batch_size = batch_size

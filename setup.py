@@ -2,17 +2,21 @@ import os
 from setuptools import setup
 
 
+here = os.path.dirname(os.path.abspath(__file__))
+about = {}
+with open(os.path.join(here, "asre2e", "__version__.py")) as f:
+    exec(f.read(), about)
+
 install_requires = [
+    "numpy",
     "torch",
     "torchaudio",
 ]
-tests_require = [
-    "pytest",
-]
+
 
 setup(
     name="asre2e",
-    version="1.0.0",
+    version=about["__version__"],
     url="https://github.com/panpan-wu/asre2e",
     author="Panpan Wu",
     author_email="wupanpan8@163.com",
@@ -20,7 +24,6 @@ setup(
     license="Apache Software License",
     packages=["asre2e"],
     install_requires=install_requires,
-    tests_require=tests_require,
     python_requires=">=3.8.0",
     classifiers=[
         "Programming Language :: Python",
