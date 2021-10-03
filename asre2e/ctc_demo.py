@@ -1,4 +1,4 @@
-# 此代码只是用来演示 ctc 相关算法的计算过程，
+# 此代码只是用来演示 ctc 相关算法的计算过程。
 # 其中 ctc loss 的计算参考了下列教程：
 #     http://www.inf.ed.ac.uk/teaching/courses/asr/2020-21/asr16-ctc.pdf
 # ctc_loss_1 相比 ctc_loss_2 有下列不同：
@@ -239,28 +239,64 @@ def ctc_prefix_beam_search(
     *0
         + 0 = *0
         + {not_0} = *{not_0}
+
+    probability_with_blank: prob_wb
+    probability_no_blank: prob_nb
     """
-    num_frames = len(probs)
-    beam = [((blank_id,), 1.0)]
-    for frame, frame_probs in enumerate(probs):
+    beam = [(tuple(), (0.0, 1.0))]
+    for frame_probs in probs:
         beam_temp = {}
-        for prefix, prev_prob in beam:
-            for i, frame_prob in enumerate(frame_probs):
-                if prefix[-1] == blank_id:
-                    cur_prefix = prefix[:-1] + (i,)
-                elif prefix[-1] == i:
-                    cur_prefix = prefix
+        for prev_prefix, (prev_prob_wb, prev_prob_nb) in beam:
+            last_char_id = prev_prefix[-1] if prev_prefix else None
+            for i, cur_prob in enumerate(frame_probs):
+                if i == blank_id:
+                    # *a + 0 -> *a0
+                    # *a0 + 0 -> *a0
+                    cur_prefix = prev_prefix
+                    cur_prob_wb, cur_prob_nb = beam_temp.get(
+                        cur_prefix, (0.0, 0.0))
+                    beam_temp[cur_prefix] = (
+                        cur_prob_wb
+                        + prev_prob_wb * cur_prob
+                        + prev_prob_nb * cur_prob,
+                        cur_prob_nb,
+                    )
+                elif i == last_char_id:
+                    # *a + a -> *a
+                    cur_prefix = prev_prefix
+                    cur_prob_wb, cur_prob_nb = beam_temp.get(
+                        cur_prefix, (0.0, 0.0))
+                    beam_temp[cur_prefix] = (
+                        cur_prob_wb,        
+                        cur_prob_nb
+                        + prev_prob_nb * cur_prob,
+                    )
+                    # *a0 + a -> *aa
+                    cur_prefix = prev_prefix + (i,)
+                    cur_prob_wb, cur_prob_nb = beam_temp.get(
+                        cur_prefix, (0.0, 0.0))
+                    beam_temp[cur_prefix] = (
+                        cur_prob_wb,        
+                        cur_prob_nb
+                        + prev_prob_wb * cur_prob,
+                    )
                 else:
-                    cur_prefix = prefix + (i,)
-                # 如果是最后一帧数据，把最后的空白符移除。
-                if frame == num_frames - 1 and cur_prefix[-1] == blank_id:
-                    cur_prefix = cur_prefix[:-1]
-                prob = prev_prob * frame_prob
-                beam_temp[cur_prefix] = beam_temp.get(cur_prefix, 0.0) + prob
+                    # *a + b -> *ab
+                    # *a0 + b -> *ab
+                    cur_prefix = prev_prefix + (i,)
+                    cur_prob_wb, cur_prob_nb = beam_temp.get(
+                        cur_prefix, (0.0, 0.0))
+                    beam_temp[cur_prefix] = (
+                        cur_prob_wb,        
+                        cur_prob_nb
+                        + prev_prob_wb * cur_prob
+                        + prev_prob_nb * cur_prob,
+                    )
         beam_temp = sorted(
             beam_temp.items(),
-            key=lambda e: e[1],
+            key=lambda e: e[0] + e[1],
             reverse=True,
         )
         beam = beam_temp[:beam_size]
+    beam = [(k, v[0] + v[1]) for k, v in beam if v[0] != 0.0 and v[1] != 0.0]
     return beam

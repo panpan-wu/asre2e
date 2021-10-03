@@ -1,29 +1,14 @@
-import torch
+import math
 
 
-# 来自 https://github.com/wenet-e2e/wenet/blob/main/wenet/utils/mask.py
-def make_pad_mask(lengths: torch.Tensor) -> torch.Tensor:
-    """Make mask tensor containing indices of padded part.
-
-    See description of make_non_pad_mask.
-
-    Args:
-        lengths (torch.Tensor): Batch of lengths (B,).
-    Returns:
-        torch.Tensor: Mask tensor containing indices of padded part.
-
-    Examples:
-        >>> lengths = [5, 3, 2]
-        >>> make_pad_mask(lengths)
-        masks = [[0, 0, 0, 0 ,0],
-                 [0, 0, 0, 1, 1],
-                 [0, 0, 1, 1, 1]]
-    """
-    batch_size = int(lengths.size(0))
-    max_len = int(lengths.max().item())
-    seq_range = torch.arange(
-        0, max_len, dtype=torch.int64, device=lengths.device)
-    seq_range_expand = seq_range.unsqueeze(0).expand(batch_size, max_len)
-    seq_length_expand = lengths.unsqueeze(-1)
-    mask = seq_range_expand >= seq_length_expand
-    return mask
+def logsumexp(*log_probs: float) -> float:
+    if all(log_prob == -float("inf") for log_prob in log_probs):
+        return -float("inf")
+    log_prob_max = max(log_probs)
+    a = math.log(
+        sum(
+            math.exp(log_prob - log_prob_max)
+            for log_prob in log_probs
+        )
+    )
+    return log_prob_max + a

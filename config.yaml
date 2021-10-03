@@ -1,5 +1,4 @@
 dataset:
-    data_file: "/home/pan/mygit/panpan-wu/asre2e/egs/aishell/data/train/data_info.mini.csv"
     batch_size: 8
     audio_transformer:
         num_mel_bins: 80
@@ -9,6 +8,10 @@ dataset:
 asr_model:
     idim: 80
     char_size: 4233
+    encoder_dim: 256
+    num_blocks: 12
+    attn_num_heads: 4
+    feed_forward_hidden_units: 2048
 
 optim_conf:
     lr: 0.001

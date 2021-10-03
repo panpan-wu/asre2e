@@ -31,8 +31,10 @@ class ConformerEncoder(nn.Module):
         conv_activation: nn.Module = Swish,
         conv_causal: bool = True,
         half_step_residual: bool = True,
+        global_cmvn: nn.Module = None,
     ):
         super().__init__()
+        self.global_cmvn = global_cmvn
         self.subsampling = Conv2dSubsampling4(
             idim=idim,
             odim=encoder_dim,
@@ -72,6 +74,9 @@ class ConformerEncoder(nn.Module):
                 xs (Tensor): (batch, time_subsampled, encoder_dim)
                 xs_lengths (Tensor): (batch,)
         """
+        if self.global_cmvn is not None:
+            xs = self.global_cmvn(xs)
+
         # xs: (batch, time_subsampled, encoder_dim)
         xs, xs_lengths = self.subsampling(xs, xs_lengths)
 
@@ -84,7 +89,7 @@ class ConformerEncoder(nn.Module):
 
         xs_lengths_non_pad_mask = ~xs_lengths_mask.unsqueeze(2)
         xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
-        for i, encoder in enumerate(self.encoders):
+        for encoder in self.encoders:
             xs = encoder(xs, attn_mask, xs_lengths_non_pad_mask)
         return (xs, xs_lengths)
 
@@ -95,16 +100,19 @@ class ConformerEncoder(nn.Module):
         self._attn_mask_maker = attn_mask_maker
 
     def set_cache(self, cache_size: int) -> None:
+        self.subsampling.enable_cache()
         for encoder in self.encoders:
             encoder.attn_set_cache_size(cache_size)
             encoder.conv_enable_cache()
 
     def clear_cache(self) -> None:
+        self.subsampling.clear_cache()
         for encoder in self.encoders:
             encoder.attn_clear_cache()
             encoder.conv_clear_cache()
 
     def disable_cache(self) -> None:
+        self.subsampling.disable_cache()
         for encoder in self.encoders:
             encoder.attn_set_cache_size(0)
             encoder.disable_cache()
@@ -174,12 +182,15 @@ class ConformerBlock(nn.Module):
         """
         xs = xs + self.feed_forward1(xs) * self.feed_forward_residual_factor
         xs = xs + self.attn(xs, attn_mask)
-        xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
+        if xs_lengths_non_pad_mask is not None:
+            xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
         xs = xs + self.conv(xs)
-        xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
+        if xs_lengths_non_pad_mask is not None:
+            xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
         xs = xs + self.feed_forward2(xs) * self.feed_forward_residual_factor
         xs = self.layer_norm(xs)
-        xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
+        if xs_lengths_non_pad_mask is not None:
+            xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
         return xs
 
     def conv_enable_cache(self) -> None:

@@ -36,6 +36,7 @@ BAC009S0248W0477,/download_dir/data_aishell/wav/train/S0248/BAC009S0248W0477.wav
 """
 import argparse
 import csv
+import locale
 import os
 from pathlib import Path
 
@@ -43,6 +44,11 @@ import torchaudio
 from torchaudio.datasets.utils import download_url
 from torchaudio.datasets.utils import extract_archive
 
+
+# 如果需要按中文字符集排序，设为 cn
+cn = "zh_CN.UTF-8"
+us = "en_US.UTF-8"
+locale.setlocale(locale.LC_COLLATE, us)
 
 WORK_DIR = "data"
 UNK_CHAR = "<unk>"
@@ -132,7 +138,7 @@ def prepare_data(download_dir: str, work_dir: str, unk_char: str) -> None:
                     continue
                 transcript = transcript_map[utterance_id]
                 char_ids = transcript_to_char_ids(
-                        transcript, char_map, unk_char_id)
+                    transcript, char_map, unk_char_id)
                 assert char_ids
                 char_ids_str = " ".join([str(e) for e in char_ids])
                 num_frames = torchaudio.info(path).num_frames
@@ -174,7 +180,7 @@ def get_char_map(download_dir: str, unk_char: str = "<unk>") -> dict:
     char_map = {}
     char_map["<blank>"] = 0
     char_map[unk_char] = 1
-    for i, char in enumerate(sorted(chars), start=2):
+    for i, char in enumerate(sorted(chars, key=locale.strxfrm), start=2):
         char_map[char] = i
     char_map["<sos/eos>"] = i + 1
     return char_map

@@ -50,8 +50,10 @@ class MultiHeadedSelfAttention(nn.Module):
                 key = value = torch.cat([self._cache, xs], dim=1)
             self._cache = key[:, -self._cache_size:]
             if mask is not None:
-                # mask 矩阵最后一维需要与 attention scores 矩阵的最后一维
-                # 大小一致。
+                # attention 矩阵的 shape: (batch, num_heads, time, key.size(1))
+                # 当实际的缓存(self._cache)大小小于 self._cache_size 时，mask 的
+                # 最后一维 time + cache_size 会大于 key.size(1)，只保留 mask
+                # 右边 key.size(1) 部分即可。
                 d = key.size(1)
                 if mask.size(2) > d:
                     mask = mask[:, :, -d:]

@@ -51,8 +51,10 @@ class Conv2dSubsampling4(nn.Module):
             nn.Linear(odim * (((idim - 1) // 2 - 1) // 2), odim),
             nn.Dropout(p=dropout_rate),
         )
-        # 需要 7 帧原始数据才能输出一帧采样后的数据，所以需要向右看 6 帧数据。
-        self.right_context = 6
+
+        self._cache_flag = False
+        self._cache = None
+        self._cache_size = 5
 
     def forward(
         self,
@@ -67,6 +69,13 @@ class Conv2dSubsampling4(nn.Module):
             Tensor: (batch, o_num_frames, odim)
                 o_num_frames = ((num_frames - 1) // 2 - 1) // 2
         """
+        real_cache_size = 0
+        if self._cache_flag:
+            if self._cache is not None:
+                real_cache_size = self._cache.size(1)
+                xs = torch.cat([self._cache, xs], dim=1)
+            self._cache = xs[:, -self._cache_size:, ]
+
         # (batch, 1, num_frames, idim)
         xs = xs.unsqueeze(1)
         # (batch, odim, o_num_frames, idim_subsampled)
@@ -78,6 +87,20 @@ class Conv2dSubsampling4(nn.Module):
         # (batch, o_num_frames, odim)
         xs = self.linear(xs)
         if xs_lengths is not None:
+            xs_lengths = xs_lengths + real_cache_size
             xs_lengths = torch.div(xs_lengths - 1, 2, rounding_mode="trunc")
             xs_lengths = torch.div(xs_lengths - 1, 2, rounding_mode="trunc")
+        else:
+            xs_lengths = torch.ones(
+                xs.size(0), dtype=torch.int, device=xs.device) * xs.size(1)
         return (xs, xs_lengths)
+
+    def enable_cache(self) -> None:
+        self._cache_flag = True
+
+    def clear_cache(self) -> None:
+        self._cache = None
+
+    def disable_cache(self) -> None:
+        self._cache = None
+        self._cache_flag = False

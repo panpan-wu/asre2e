@@ -2,7 +2,11 @@ import torch
 from torch import Tensor
 
 
-class CaucalAttentionMaskMaker:
+class CausalAttentionMaskMaker:
+    """因果 Mask。
+
+    当前帧只与过去的指定数量的帧进行 attention。
+    """
 
     def __init__(self, history_num_frames: int):
         """
@@ -26,6 +30,38 @@ class CaucalAttentionMaskMaker:
         attn_mask = attn_mask.unsqueeze(0).expand(
             xs.size(0), xs.size(1), xs.size(1))
         return attn_mask
+
+
+class StreamingAttentionMaskMaker:
+    """流式识别 Mask。
+
+    进行流式识别时可以通过设置 cache_size 来改变能看到的过去的帧数。
+    cache_size 应与训练时的 history_num_frames 保持一致。
+    """
+
+    def __init__(self, cache_size: int):
+        self.cache_size = cache_size
+
+    def __call__(self, xs: Tensor, xs_lengths: Tensor) -> Tensor:
+        """
+        Args:
+            xs (Tensor): (1, time, dim)
+            xs_lengths (Tensor): None
+        Returns:
+            Tensor: (1, time, time + cache_size)
+        """
+        num_frames = xs.size(1)
+        attn_mask = torch.ones(
+            num_frames,
+            num_frames + self.cache_size,
+            device=xs.device,
+            dtype=torch.bool,
+        )
+        # 右上角置为 False
+        attn_mask.tril_(self.cache_size)
+        # 左下角置为 False
+        attn_mask.triu_()
+        return attn_mask.unsqueeze(0)
 
 
 def make_length_mask(lengths: Tensor) -> Tensor:
