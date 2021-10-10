@@ -5,7 +5,7 @@ from asre2e.ctc_demo import ctc_beam_search
 from asre2e.ctc_demo import ctc_loss_1
 from asre2e.ctc_demo import ctc_loss_2
 from asre2e.ctc_demo import ctc_prefix_beam_search
-from asre2e.ctc_demo import ctc_remove_blank
+from asre2e.ctc_demo import ctc_merge_duplicates_and_remove_blanks
 
 
 def _randprobs(length: int):
@@ -110,13 +110,13 @@ def test_ctc_align():
 
 def test_ctc_remove_blank():
     char_ids = [1, 1, 2, 2]
-    assert ctc_remove_blank(char_ids) == [1, 2]
+    assert ctc_merge_duplicates_and_remove_blanks(char_ids) == [1, 2]
     char_ids = [1, 0, 1, 1]
-    assert ctc_remove_blank(char_ids) == [1, 1]
+    assert ctc_merge_duplicates_and_remove_blanks(char_ids) == [1, 1]
     char_ids = [0, 0, 0, 0]
-    assert ctc_remove_blank(char_ids) == []
+    assert ctc_merge_duplicates_and_remove_blanks(char_ids) == []
     char_ids = [0, 1, 0, 2]
-    assert ctc_remove_blank(char_ids) == [1, 2]
+    assert ctc_merge_duplicates_and_remove_blanks(char_ids) == [1, 2]
 
 
 def test_ctc_beam_search():
@@ -158,7 +158,7 @@ def test_ctc_prefix_beam_search():
         seqs = seqs_temp
     seqs_noblank = {}
     for seq, prob in seqs:
-        key = tuple(ctc_remove_blank(seq))
+        key = tuple(ctc_merge_duplicates_and_remove_blanks(seq))
         seqs_noblank[key] = seqs_noblank.get(key, 0.0) + prob
 
     beam_size = 100

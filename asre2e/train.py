@@ -41,7 +41,7 @@ def main():
     model = create_asr_model(conf["asr_model"], args.global_cmvn)
     if args.checkpoint:
         checkpoint = torch.load(args.checkpoint, map_location=device)
-        model.load_state_dict(checkpoint)
+        model.load_state_dict(checkpoint, strict=False)
     model.to(device)
     model.train()
 
@@ -61,7 +61,7 @@ def main():
     epochs = conf["epochs"]
     for epoch in range(epochs):
         for i, data in enumerate(dataloader):
-            xs, ys, xs_lengths, ys_lengths = data
+            _, xs, ys, xs_lengths, ys_lengths = data
             loss = model(xs, xs_lengths, ys, ys_lengths)
             optimizer.zero_grad()
             loss.backward()

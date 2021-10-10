@@ -85,11 +85,16 @@ class AudioDataset(Dataset):
         if r > 0:
             self._length += 1
 
-    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    def __getitem__(
+        self,
+        idx: int,
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+        utterance_ids = []
         xs = []
         ys = []
         start_index = idx * self._batch_size
         for item in self._data[start_index:start_index + self._batch_size]:
+            utterance_ids.append(item["utterance_id"])
             feature = self._transformer(item["audio_file"])
             xs.append(feature)
             target = self._target_transformer(item["char_ids"])
@@ -98,7 +103,7 @@ class AudioDataset(Dataset):
         ys_lengths = torch.tensor([len(e) for e in ys], dtype=torch.int32)
         xs = pad_sequence(xs, batch_first=True)
         ys = pad_sequence(ys, batch_first=True)
-        return (xs, ys, xs_lengths, ys_lengths)
+        return (utterance_ids, xs, ys, xs_lengths, ys_lengths)
 
     def __len__(self) -> int:
         return self._length

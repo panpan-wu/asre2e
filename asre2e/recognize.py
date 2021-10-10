@@ -38,6 +38,9 @@ def main():
         "--search_type",
         default=SearchType.ctc_prefix_beam_search,
     )
+    parser.add_argument("--beam_size", type=int, default=1)
+    parser.add_argument("--streaming", type=bool, default=False)
+    parser.add_argument("--cache_size", type=int, default=8)
 
     args = parser.parse_args()
 
@@ -57,20 +60,38 @@ def main():
     dataloader = DataLoader(dataset, batch_size=None, shuffle=False)
     model = create_asr_model(conf["asr_model"], args.global_cmvn)
     checkpoint = torch.load(args.checkpoint, map_location=device)
-    model.load_state_dict(checkpoint)
+    model.load_state_dict(checkpoint, strict=False)
     model.to(device)
     model.eval()
 
-    with torch.no_grad():
-        for i, data in enumerate(dataloader):
-            xs, _, xs_lengths, _ = data
-            res = model.ctc_search(
-                xs, xs_lengths, search_type=SearchType.ctc_prefix_beam_search,
-                beam_size=4)
-            for beam in res:
-                for item in beam:
-                    chars = [char_map.get(char_id) for char_id in item]
-                    print(chars)
+    if args.streaming:
+        with torch.no_grad():
+            recognizer = model.streaming_recognizer(
+                search_type=args.search_type,
+                cache_size=args.cache_size,
+                beam_size=args.beam_size,
+            )
+            for i, data in enumerate(dataloader):
+                utterance_ids, xs, _, xs_lengths, _ = data
+                res = recognizer.forward(xs[0], args.cache_size)
+                print(utterance_ids)
+                for beam in res:
+                    for item in beam:
+                        chars = [char_map.get(char_id) for char_id in item]
+                        print(chars)
+    else:
+        with torch.no_grad():
+            for i, data in enumerate(dataloader):
+                utterance_ids, xs, _, xs_lengths, _ = data
+                res = model.ctc_search(
+                    xs, xs_lengths,
+                    search_type=args.search_type,
+                    beam_size=args.beam_size)
+                print(utterance_ids)
+                for beam in res:
+                    for item in beam:
+                        chars = [char_map.get(char_id) for char_id in item]
+                        print(chars)
 
 
 if __name__ == "__main__":

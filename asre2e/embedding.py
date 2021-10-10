@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 
 
-# 参考了 espnet
+# 参考了 ESPnet
 class PositionalEncoding:
     """Positional encoding.
 

@@ -26,6 +26,20 @@ class SearchType:
 
 
 class BaseStreamingRecognizer:
+    """流式识别。
+
+    开始识别一段新的语音前，需要调用 clear_cache 清除掉缓存。
+
+    示例：
+        recognizer = asr_model.streaming_recognizer(
+            search_type=SearchType.ctc_prefix_beam_search,
+            cache_size=16,
+            beam_size=2,
+        )
+        recognizer.clear_cache()
+        chunk = torch.randn(chunk_size, dim)
+        res = recognizer.forward_chunk(chunk)
+    """
 
     def __init__(
         self,
@@ -40,36 +54,66 @@ class BaseStreamingRecognizer:
         self._prev_beam = None
 
     def forward_chunk(self, chunk: Tensor) -> List[List[int]]:
-        """
+        """处理部分语音，用以支持流式识别。
+
+        子类需要覆写此方法来支持不同的识别算法。
+
         Args:
             chunk (Tensor): (time, dim)
         Returns:
-            [List[int]]:
+            List[List[int]]:
                 [
                     [char_id, ...],
                     ...
                 ]
         """
-        # (1, time, dim)
-        ys_hat = self.asr_model.forward_chunk(chunk)
-        char_ids = self.beam_searcher.prefix_beam_search(ys_hat)
-        return char_ids
+        raise NotImplementedError()
 
-    def forward(self, x: Tensor, chunk_size: int) -> List[List[int]]:
+    def forward(
+        self,
+        xs: Tensor,
+        xs_lengths: Tensor,
+        chunk_size: int,
+    ) -> List[List[List[int]]]:
         """
         Args:
-            x (Tensor): 一个完整的句子。shape: (time, dim)
+            xs (Tensor): (batch, time, dim)
+            xs_lengths (Tensor): (batch,)
             chunk_size (int): chunk 大小。
+        Returns:
+            List[List[List[int]]]:
+                [
+                    [
+                        [char_id, ...],  # beam 1
+                        [char_id, ...],  # beam 2
+                        ...
+                    ],  # batch 1
+                    [
+                        [char_id, ...],  # beam 1
+                        [char_id, ...],  # beam 2
+                        ...
+                    ], # batch 2
+                    ...
+                ]
         """
-        self.clear_cache()
-        num_frames = x.size(0)
-        for start in range(0, num_frames, chunk_size):
-            chunk = x[start:start + chunk_size]
-            char_ids = self.forward_chunk(chunk)
-        self.clear_cache()
-        return char_ids
+        batch_size = xs.size(0)
+        res = []
+        for batch_idx in range(batch_size):
+            x_length = xs_lengths[batch_idx].item()
+            x = xs[batch_idx][:x_length]
+            num_frames = x.size(0)
+            self.clear_cache()
+            for start in range(0, num_frames, chunk_size):
+                chunk = x[start:start + chunk_size]
+                beam = self.forward_chunk(chunk)
+            res.append(beam)
+        return res
 
     def clear_cache(self) -> None:
+        """清除缓存。
+
+        开始识别一段新的语音前，需要调用此方法清除掉缓存。
+        """
         self.asr_model.clear_cache()
         self._prev_beam = None
 
@@ -90,8 +134,7 @@ class CTCBeamSearchStreamingRecognizer(BaseStreamingRecognizer):
     def forward_chunk(self, chunk: Tensor) -> List[List[int]]:
         ys_hat = self.asr_model.forward_chunk(chunk)
         self._prev_beam: List[Tuple[List[int], float]] = (
-            ctc_beam_search(
-                ys_hat, self.beam_size, self._prev_beam, self.blank_id))
+            ctc_beam_search(ys_hat, self.beam_size, self._prev_beam))
         char_ids = [
             ctc_merge_duplicates_and_remove_blanks(e[0], self.blank_id)
             for e in self._prev_beam
@@ -129,6 +172,8 @@ class ASRModel(nn.Module):
             xs_lengths (Tensor): (batch,)
             ys (Tensor): (batch, l) l 为此 batch 内最长的句子的字符数。
             ys_lengths (Tensor): (batch,)
+        Returns:
+            Tensor: ctc loss.
         """
         hs, xs_lengths = self.encoder(xs, xs_lengths)
         # (batch, time_subsampled, char_size)

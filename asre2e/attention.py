@@ -12,7 +12,7 @@ class MultiHeadedSelfAttention(nn.Module):
     训练时把 cache_size 设为 0，并设置适当的 mask 来控制能看到的过去和未来
     的帧数。比如一个右上三角全是 False，对角线和左下角全是 True 的 mask
     表示当前帧只能看到过去(包括当前)的帧，可以实现因果 attention。
-    流式识别时把 cache_size 设为大于 0 的数，并且需要在一句结束时主动调用
+    流式识别时把 cache_size 设为大于 0 的数，并且需要在识别前主动调用
     clear_cache 方法清除缓存。
     """
 
@@ -41,6 +41,8 @@ class MultiHeadedSelfAttention(nn.Module):
         Args:
             xs (Tensor): (batch, time, dim)
             mask (Tensor): (batch, time, time + cache_size)
+        Returns:
+            Tensor: (batch, time, dim)
         """
         query = xs
         if self._cache_size > 0:
@@ -51,8 +53,8 @@ class MultiHeadedSelfAttention(nn.Module):
             self._cache = key[:, -self._cache_size:]
             if mask is not None:
                 # attention 矩阵的 shape: (batch, num_heads, time, key.size(1))
-                # 当实际的缓存(self._cache)大小小于 self._cache_size 时，mask 的
-                # 最后一维 time + cache_size 会大于 key.size(1)，只保留 mask
+                # 当实际的缓存(self._cache)大小小于 self._cache_size 时，mask
+                # 的最后一维 time + cache_size 会大于 key.size(1)，只保留 mask
                 # 右边 key.size(1) 部分即可。
                 d = key.size(1)
                 if mask.size(2) > d:

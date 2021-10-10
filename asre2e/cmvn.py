@@ -1,4 +1,4 @@
-# from wenet
+# 来自 WeNet
 import logging
 import json
 import math

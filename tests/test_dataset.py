@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader
 from asre2e.dataset import AudioDataset
 from asre2e.dataset import AudioTransformer
 from asre2e.dataset import TranscriptTransformer
+
 from tests import TrainData
 
 
@@ -22,8 +23,14 @@ def test_dataset():
     length = len(dataset)
     assert length == num_batchs
     assert len(dataset[length - 1][0]) == r
-    xs, ys, xs_lengths, ys_lengths = dataset[0]
-    assert len(xs) == len(ys) == len(xs_lengths) == len(ys_lengths)
+    utterance_ids, xs, ys, xs_lengths, ys_lengths = dataset[0]
+    assert (
+        len(utterance_ids)
+        == len(xs)
+        == len(ys)
+        == len(xs_lengths)
+        == len(ys_lengths)
+    )
 
     dataloader = DataLoader(dataset, batch_size=None)
     for i, item in enumerate(dataloader):

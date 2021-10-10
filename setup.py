@@ -1,4 +1,5 @@
 import os
+
 from setuptools import setup
 
 
@@ -9,8 +10,6 @@ with open(os.path.join(here, "asre2e", "__version__.py")) as f:
 
 install_requires = [
     "numpy",
-    "torch",
-    "torchaudio",
 ]
 
 
@@ -24,6 +23,12 @@ setup(
     license="Apache Software License",
     packages=["asre2e"],
     install_requires=install_requires,
+    entry_points={
+        "console_scripts": [
+            "asre2e_train = asre2e.train:main",
+            "asre2e_recognize = asre2e.recognize:main",
+        ]
+    },
     python_requires=">=3.8.0",
     classifiers=[
         "Programming Language :: Python",

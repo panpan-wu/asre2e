@@ -130,3 +130,9 @@ dmypy.json
 
 egs/aishell/*
 !egs/aishell/aishell.py
+!egs/aishell/conf/
+!egs/aishell/data/
+!egs/aishell/get_wenet_state_dict.py
+!egs/aishell/recognize.sh
+!egs/aishell/run.sh
+!egs/aishell/download_wenet_model.sh

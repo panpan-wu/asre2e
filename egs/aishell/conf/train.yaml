@@ -1,0 +1,19 @@
+dataset:
+    batch_size: 8
+    audio_transformer:
+        num_mel_bins: 80
+        frame_length: 25
+        frame_shift: 10
+
+asr_model:
+    idim: 80
+    char_size: 4233
+    encoder_dim: 256
+    num_blocks: 12
+    attn_num_heads: 4
+    feed_forward_hidden_units: 2048
+
+optim_conf:
+    lr: 0.001
+
+epochs: 1

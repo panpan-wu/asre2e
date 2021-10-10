@@ -199,5 +199,5 @@ def ctc_prefix_beam_search(
         beam = beam_temp[:beam_size]
     beam = [(k, v)
             for k, v in beam
-            if v[0] != -float("inf") and v[1] != -float("inf")]
+            if v[0] != -float("inf") or v[1] != -float("inf")]
     return beam

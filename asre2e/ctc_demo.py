@@ -20,6 +20,8 @@ def ctc_loss_1(
             num_frames 是帧数，char_size 是字符表大小。
         char_ids: 字符 id，示例：[23, 47, 88]。
         blank_id: 空白符的 id，通常都是 0。
+    Returns:
+        float: ctc loss
     """
     if not probs or not char_ids:
         return 0.0
@@ -61,6 +63,8 @@ def ctc_loss_2(
             num_frames 是帧数，char_size 是字符表大小。
         char_ids: 字符 id，示例：[23, 47, 88]。
         blank_id: 空白符的 id，通常都是 0。
+    Returns:
+        float: ctc loss
     """
     if not probs or not char_ids:
         return 0.0
@@ -113,13 +117,15 @@ def ctc_align(
     probs: List[List],
     char_ids: List,
     blank_id: int = 0,
-) -> List:
+) -> List[int]:
     """
     Args:
         probs: 真实的概率值，不是 log 概率。shape: (num_frames, char_size),
             num_frames 是帧数，char_size 是字符表大小。
         char_ids: 字符 id，示例：[23, 47, 88]。
         blank_id: 空白符的 id，通常都是 0。
+    Returns:
+        List[int]: [char_id, ...]
     """
     # 字符序列比帧数还多时不可能对齐。
     if len(char_ids) > len(probs):
@@ -187,10 +193,10 @@ def ctc_align(
     return alignments
 
 
-def ctc_remove_blank(
-    char_ids: List,
+def ctc_merge_duplicates_and_remove_blanks(
+    char_ids: List[int],
     blank_id: int = 0,
-) -> List:
+) -> List[int]:
     res = []
     prev_char_id = blank_id
     for char_id in char_ids:
@@ -267,7 +273,7 @@ def ctc_prefix_beam_search(
                     cur_prob_wb, cur_prob_nb = beam_temp.get(
                         cur_prefix, (0.0, 0.0))
                     beam_temp[cur_prefix] = (
-                        cur_prob_wb,        
+                        cur_prob_wb,
                         cur_prob_nb
                         + prev_prob_nb * cur_prob,
                     )
@@ -276,7 +282,7 @@ def ctc_prefix_beam_search(
                     cur_prob_wb, cur_prob_nb = beam_temp.get(
                         cur_prefix, (0.0, 0.0))
                     beam_temp[cur_prefix] = (
-                        cur_prob_wb,        
+                        cur_prob_wb,
                         cur_prob_nb
                         + prev_prob_wb * cur_prob,
                     )
@@ -287,7 +293,7 @@ def ctc_prefix_beam_search(
                     cur_prob_wb, cur_prob_nb = beam_temp.get(
                         cur_prefix, (0.0, 0.0))
                     beam_temp[cur_prefix] = (
-                        cur_prob_wb,        
+                        cur_prob_wb,
                         cur_prob_nb
                         + prev_prob_wb * cur_prob
                         + prev_prob_nb * cur_prob,
@@ -298,5 +304,5 @@ def ctc_prefix_beam_search(
             reverse=True,
         )
         beam = beam_temp[:beam_size]
-    beam = [(k, v[0] + v[1]) for k, v in beam if v[0] != 0.0 and v[1] != 0.0]
+    beam = [(k, v[0] + v[1]) for k, v in beam if v[0] != 0.0 or v[1] != 0.0]
     return beam
