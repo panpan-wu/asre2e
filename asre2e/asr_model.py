@@ -1,4 +1,3 @@
-import copy
 from typing import List
 from typing import Tuple
 
@@ -43,11 +42,11 @@ class BaseStreamingRecognizer:
 
     def __init__(
         self,
-        asr_model: nn.Module,
+        asr_model_streaming: nn.Module,
         beam_size: int = 1,
         blank_id: int = 0,
     ):
-        self.asr_model = asr_model
+        self.asr_model_streaming = asr_model_streaming
         self.beam_size = beam_size
         self.blank_id = blank_id
 
@@ -114,14 +113,14 @@ class BaseStreamingRecognizer:
 
         开始识别一段新的语音前，需要调用此方法清除掉缓存。
         """
-        self.asr_model.clear_cache()
+        self.asr_model_streaming.clear_cache()
         self._prev_beam = None
 
 
 class CTCPrefixBeamSearchStreamingRecognizer(BaseStreamingRecognizer):
 
     def forward_chunk(self, chunk: Tensor) -> List[List[int]]:
-        ys_hat = self.asr_model.forward_chunk(chunk)
+        ys_hat = self.asr_model_streaming.forward_chunk(chunk)
         self._prev_beam: List[Tuple[List[int], Tuple[float, float]]] = (
             ctc_prefix_beam_search(
                 ys_hat, self.beam_size, self._prev_beam, self.blank_id))
@@ -132,7 +131,7 @@ class CTCPrefixBeamSearchStreamingRecognizer(BaseStreamingRecognizer):
 class CTCBeamSearchStreamingRecognizer(BaseStreamingRecognizer):
 
     def forward_chunk(self, chunk: Tensor) -> List[List[int]]:
-        ys_hat = self.asr_model.forward_chunk(chunk)
+        ys_hat = self.asr_model_streaming.forward_chunk(chunk)
         self._prev_beam: List[Tuple[List[int], float]] = (
             ctc_beam_search(ys_hat, self.beam_size, self._prev_beam))
         char_ids = [
@@ -145,7 +144,7 @@ class CTCBeamSearchStreamingRecognizer(BaseStreamingRecognizer):
 class CTCGreedySearchStreamingRecognizer(BaseStreamingRecognizer):
 
     def forward_chunk(self, chunk: Tensor) -> List[List[int]]:
-        ys_hat = self.asr_model.forward_chunk(chunk)
+        ys_hat = self.asr_model_streaming.forward_chunk(chunk)
         char_ids: List[int] = ctc_greedy_search(ys_hat)
         char_ids = [ctc_merge_duplicates_and_remove_blanks(char_ids)]
         return char_ids
@@ -182,42 +181,10 @@ class ASRModel(nn.Module):
         loss = self.ctc_loss(ys_hat, ys, xs_lengths, ys_lengths)
         return loss
 
-    def forward_chunk(self, chunk: Tensor) -> Tensor:
-        """
-        Args:
-            chunk (Tensor): (time, dim)
-        Returns:
-            Tensor: (time_subsampled, char_size)
-        """
-        chunk = chunk.unsqueeze(0)  # (1, time, dim)
-        hs, _ = self.encoder(chunk, None)
+    def get_ctc_log_probs(self, xs: Tensor, xs_lengths: Tensor):
+        hs, xs_lengths = self.encoder(xs, xs_lengths)
         ys_hat = self.ctc_decoder(hs)
-        ys_hat = ys_hat.squeeze(0)
-        return ys_hat
-
-    def streaming_recognizer(
-        self,
-        search_type: str,
-        cache_size: int,
-        beam_size: int = 1,
-        blank_id: int = 0,
-    ) -> BaseStreamingRecognizer:
-        asr_model = copy.deepcopy(self)
-        attn_mask_maker = StreamingAttentionMaskMaker(cache_size)
-        asr_model.encoder.set_cache(cache_size)
-        asr_model.encoder.set_attn_mask_maker(attn_mask_maker)
-        if search_type == SearchType.ctc_prefix_beam_search:
-            recognizer = CTCPrefixBeamSearchStreamingRecognizer(
-                asr_model, beam_size, blank_id)
-        elif search_type == SearchType.ctc_beam_search:
-            recognizer = CTCBeamSearchStreamingRecognizer(
-                asr_model, beam_size, blank_id)
-        elif search_type == SearchType.ctc_greedy_search:
-            recognizer = CTCGreedySearchStreamingRecognizer(
-                asr_model, beam_size, blank_id)
-        else:
-            raise ValueError("unknown search type: %s" % search_type)
-        return recognizer
+        return (ys_hat, xs_lengths)
 
     def ctc_search(
         self,
@@ -247,15 +214,62 @@ class ASRModel(nn.Module):
                 char_ids = [e[0] for e in char_id_probs]
             else:
                 raise ValueError("unknown search type: %s" % search_type)
-            char_ids = [
-                ctc_merge_duplicates_and_remove_blanks(e, blank_id)
-                for e in char_ids
-            ]
+            if (
+                search_type == SearchType.ctc_greedy_search
+                or search_type == SearchType.ctc_beam_search
+            ):
+                char_ids = [
+                    ctc_merge_duplicates_and_remove_blanks(e, blank_id)
+                    for e in char_ids
+                ]
             res.append(char_ids)
         return res
 
+    def streaming(self, attn_cache_size: int) -> "ASRModelStreaming":
+        return ASRModelStreaming(self, attn_cache_size)
+
+    def streaming_recognizer(
+        self,
+        search_type: str,
+        attn_cache_size: int,
+        beam_size: int = 1,
+        blank_id: int = 0,
+    ) -> BaseStreamingRecognizer:
+        asr_model_streaming = self.streaming(attn_cache_size)
+        if search_type == SearchType.ctc_prefix_beam_search:
+            recognizer = CTCPrefixBeamSearchStreamingRecognizer(
+                asr_model_streaming, beam_size, blank_id)
+        elif search_type == SearchType.ctc_beam_search:
+            recognizer = CTCBeamSearchStreamingRecognizer(
+                asr_model_streaming, beam_size, blank_id)
+        elif search_type == SearchType.ctc_greedy_search:
+            recognizer = CTCGreedySearchStreamingRecognizer(
+                asr_model_streaming, beam_size, blank_id)
+        else:
+            raise ValueError("unknown search type: %s" % search_type)
+        return recognizer
+
+
+class ASRModelStreaming:
+
+    def __init__(self, asr_model: ASRModel, attn_cache_size: int):
+        self.asr_model = asr_model
+        self.attn_cache_size = attn_cache_size
+
+        self.encoder_streaming = self.asr_model.encoder.streaming(
+            self.attn_cache_size)
+        attn_mask_maker = StreamingAttentionMaskMaker(self.attn_cache_size)
+        self.encoder_streaming.set_attn_mask_maker(attn_mask_maker)
+
+    def forward_chunk(self, chunk: Tensor) -> Tensor:
+        chunk = chunk.unsqueeze(0)  # (1, time, dim)
+        hs = self.encoder_streaming.forward_chunk(chunk)
+        ys_hat = self.asr_model.ctc_decoder(hs)
+        ys_hat = ys_hat.squeeze(0)
+        return ys_hat
+
     def clear_cache(self) -> None:
-        self.encoder.clear_cache()
+        self.encoder_streaming.clear_cache()
 
 
 def create_asr_model(conf: dict, cmvn_file: str = None):

@@ -40,7 +40,7 @@ class ConformerEncoder(nn.Module):
             odim=encoder_dim,
             dropout_rate=subsampling_dropout_rate,
         )
-        self.encoders = nn.ModuleList([
+        self.blocks = nn.ModuleList([
             ConformerBlock(
                 idim=encoder_dim,
                 attn_num_heads=attn_num_heads,
@@ -89,8 +89,8 @@ class ConformerEncoder(nn.Module):
 
         xs_lengths_non_pad_mask = ~xs_lengths_mask.unsqueeze(2)
         xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
-        for encoder in self.encoders:
-            xs = encoder(xs, attn_mask, xs_lengths_non_pad_mask)
+        for block in self.blocks:
+            xs = block(xs, attn_mask, xs_lengths_non_pad_mask)
         return (xs, xs_lengths)
 
     def set_attn_mask_maker(
@@ -99,23 +99,54 @@ class ConformerEncoder(nn.Module):
     ) -> None:
         self._attn_mask_maker = attn_mask_maker
 
-    def set_cache(self, cache_size: int) -> None:
-        self.subsampling.enable_cache()
-        for encoder in self.encoders:
-            encoder.attn_set_cache_size(cache_size)
-            encoder.conv_enable_cache()
+    def streaming(self, attn_cache_size: int) -> "ConformerEncoderStreaming":
+        return ConformerEncoderStreaming(self, attn_cache_size)
+
+
+class ConformerEncoderStreaming:
+
+    def __init__(self, encoder: ConformerEncoder, attn_cache_size: int):
+        self.encoder = encoder
+        self.attn_cache_size = attn_cache_size
+
+        self.subsampling_streaming = self.encoder.subsampling.streaming()
+
+        self.blocks_streaming = [
+            block.streaming(self.attn_cache_size)
+            for block in self.encoder.blocks
+        ]
+        self._attn_mask_maker = None
+
+    def forward_chunk(self, chunk: Tensor) -> Tensor:
+        assert chunk.size(0) == 1
+
+        xs = chunk
+        if self.encoder.global_cmvn is not None:
+            xs = self.encoder.global_cmvn(xs)
+
+        xs = self.subsampling_streaming.forward_chunk(xs)
+        if xs is None:
+            return None
+
+        attn_mask = None
+        if self._attn_mask_maker is not None:
+            attn_mask = self._attn_mask_maker(xs)
+
+        for block in self.blocks_streaming:
+            xs = block.forward_chunk(xs, attn_mask)
+
+        return xs
+
+    def set_attn_mask_maker(
+        self,
+        attn_mask_maker: Callable[[Tensor, Tensor], Tensor],
+    ) -> None:
+        self._attn_mask_maker = attn_mask_maker
 
     def clear_cache(self) -> None:
-        self.subsampling.clear_cache()
-        for encoder in self.encoders:
-            encoder.attn_clear_cache()
-            encoder.conv_clear_cache()
-
-    def disable_cache(self) -> None:
-        self.subsampling.disable_cache()
-        for encoder in self.encoders:
-            encoder.attn_set_cache_size(0)
-            encoder.disable_cache()
+        self.subsampling_streaming.clear_cache()
+        for block in self.blocks_streaming:
+            block.clear_cache()
 
 
 class ConformerBlock(nn.Module):
@@ -193,17 +224,29 @@ class ConformerBlock(nn.Module):
             xs = xs.masked_fill(xs_lengths_non_pad_mask, 0.0)
         return xs
 
-    def conv_enable_cache(self) -> None:
-        self.conv.enable_cache()
+    def streaming(self, attn_cache_size: int) -> "ConformerBlockStreaming":
+        return ConformerBlockStreaming(self, attn_cache_size)
 
-    def conv_clear_cache(self) -> None:
-        self.conv.clear_cache()
 
-    def conv_disable_cache(self) -> None:
-        self.conv.disable_cache()
+class ConformerBlockStreaming:
 
-    def attn_set_cache_size(self, cache_size: int) -> None:
-        self.attn.set_cache_size(cache_size)
+    def __init__(self, block: ConformerBlock, attn_cache_size: int):
+        self.block = block
+        self.attn_cache_size = attn_cache_size
 
-    def attn_clear_cache(self) -> None:
-        self.attn.clear_cache()
+        self.attn_streaming = self.block.attn.streaming(self.attn_cache_size)
+        self.conv_streaming = self.block.conv.streaming()
+
+    def forward_chunk(self, chunk: Tensor, attn_mask: Tensor) -> Tensor:
+        assert chunk.size(0) == 1
+        xs = chunk
+        xs = xs + self.block.feed_forward1(xs) * self.block.feed_forward_residual_factor
+        xs = xs + self.attn_streaming.forward_chunk(xs, attn_mask)
+        xs = xs + self.conv_streaming.forward_chunk(xs)
+        xs = xs + self.block.feed_forward2(xs) * self.block.feed_forward_residual_factor
+        xs = self.block.layer_norm(xs)
+        return xs
+
+    def clear_cache(self) -> None:
+        self.attn_streaming.clear_cache()
+        self.conv_streaming.clear_cache()

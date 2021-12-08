@@ -1,3 +1,4 @@
+from typing import Optional
 from typing import Tuple
 
 import torch
@@ -52,14 +53,10 @@ class Conv2dSubsampling4(nn.Module):
             nn.Dropout(p=dropout_rate),
         )
 
-        self._cache_flag = False
-        self._cache = None
-        self._cache_size = 5
-
     def forward(
         self,
         xs: Tensor,
-        xs_lengths: Tensor = None,
+        xs_lengths: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Tensor]:
         """
         Args:
@@ -69,13 +66,6 @@ class Conv2dSubsampling4(nn.Module):
             Tensor: (batch, o_num_frames, odim)
                 o_num_frames = ((num_frames - 1) // 2 - 1) // 2
         """
-        real_cache_size = 0
-        if self._cache_flag:
-            if self._cache is not None:
-                real_cache_size = self._cache.size(1)
-                xs = torch.cat([self._cache, xs], dim=1)
-            self._cache = xs[:, -self._cache_size:, ]
-
         # (batch, 1, num_frames, idim)
         xs = xs.unsqueeze(1)
         # (batch, odim, o_num_frames, idim_subsampled)
@@ -87,20 +77,37 @@ class Conv2dSubsampling4(nn.Module):
         # (batch, o_num_frames, odim)
         xs = self.linear(xs)
         if xs_lengths is not None:
-            xs_lengths = xs_lengths + real_cache_size
             xs_lengths = torch.div(xs_lengths - 1, 2, rounding_mode="trunc")
             xs_lengths = torch.div(xs_lengths - 1, 2, rounding_mode="trunc")
-        else:
-            xs_lengths = torch.ones(
-                xs.size(0), dtype=torch.int, device=xs.device) * xs.size(1)
         return (xs, xs_lengths)
 
-    def enable_cache(self) -> None:
-        self._cache_flag = True
+    def streaming(self) -> "Conv2dSubsampling4Streaming":
+        return Conv2dSubsampling4Streaming(self)
+
+
+class Conv2dSubsampling4Streaming:
+
+    def __init__(self, subsampling_module: Conv2dSubsampling4):
+        self.subsampling_module = subsampling_module
+
+        self._cache = None
+
+    def forward_chunk(self, chunk: Tensor) -> Tensor:
+        """
+        Args:
+            chunk (Tensor): (1, num_frames, idim)
+        Returns:
+            Tensor: (1, o_num_frames, odim)
+        """
+        assert chunk.size(0) == 1
+        if self._cache is not None:
+            chunk = torch.cat([self._cache, chunk], dim=1)
+            if chunk.size(1) < 11:  # 保证采样后至少有两帧数据。
+                self._cache = chunk[:]
+                return None
+        next_cache_size = (chunk.size(1) - 7) % 4 + 3
+        self._cache = chunk[:, -next_cache_size:, ]
+        return self.subsampling_module.forward(chunk)
 
     def clear_cache(self) -> None:
         self._cache = None
-
-    def disable_cache(self) -> None:
-        self._cache = None
-        self._cache_flag = False

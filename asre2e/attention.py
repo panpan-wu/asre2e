@@ -9,11 +9,9 @@ from asre2e.embedding import PositionalEncoding
 
 class MultiHeadedSelfAttention(nn.Module):
     """
-    训练时把 cache_size 设为 0，并设置适当的 mask 来控制能看到的过去和未来
-    的帧数。比如一个右上三角全是 False，对角线和左下角全是 True 的 mask
+    训练时设置适当的 mask 来控制能看到的过去和未来的帧数。比如一个右上三角
+    全是 False，对角线和左下角全是 True 的 mask
     表示当前帧只能看到过去(包括当前)的帧，可以实现因果 attention。
-    流式识别时把 cache_size 设为大于 0 的数，并且需要在识别前主动调用
-    clear_cache 方法清除缓存。
     """
 
     def __init__(
@@ -31,45 +29,62 @@ class MultiHeadedSelfAttention(nn.Module):
             dropout_rate (float): dropout 概率。
         """
         super().__init__()
-        self._attn_module = MultiHeadedAttentionWithRelativePos(
+        self.attn_module = MultiHeadedAttentionWithRelativePos(
             d_model, d_head, num_heads, dropout_rate)
-        self._cache_size = 0
-        self._cache: Tensor = None
 
     def forward(self, xs: Tensor, mask: Tensor = None) -> Tensor:
         """
         Args:
             xs (Tensor): (batch, time, dim)
-            mask (Tensor): (batch, time, time + cache_size)
+            mask (Tensor): (batch, time, time)
         Returns:
             Tensor: (batch, time, dim)
         """
-        query = xs
-        if self._cache_size > 0:
+        return self.attn_module.forward(xs, xs, xs, mask)
+
+    def streaming(
+        self,
+        cache_size: int,
+    ) -> "MultiHeadedSelfAttentionStreaming":
+        return MultiHeadedSelfAttentionStreaming(self, cache_size)
+
+
+class MultiHeadedSelfAttentionStreaming:
+
+    def __init__(self, attn_module: MultiHeadedSelfAttention, cache_size: int):
+        self.attn_module = attn_module
+        self.cache_size = cache_size
+
+        self._cache: Tensor = None
+
+    def forward_chunk(self, chunk: Tensor, mask: Tensor) -> Tensor:
+        """
+        Args:
+            chunk (Tensor): (1, time, dim)
+            mask (Tensor): (1, time, time + cache_size)
+        Returns:
+            Tensor: (1, time, dim)
+        """
+        assert chunk.size(0) == 1
+        query = chunk
+        if self.cache_size > 0:
             if self._cache is None:
-                key = value = xs
+                key = value = query
             else:
-                key = value = torch.cat([self._cache, xs], dim=1)
-            self._cache = key[:, -self._cache_size:]
+                key = value = torch.cat([self._cache, chunk], dim=1)
+            self._cache = key[:, -self.cache_size:]
             if mask is not None:
                 # attention 矩阵的 shape: (batch, num_heads, time, key.size(1))
-                # 当实际的缓存(self._cache)大小小于 self._cache_size 时，mask
+                # 当实际的缓存(self._cache)大小小于 self.cache_size 时，mask
                 # 的最后一维 time + cache_size 会大于 key.size(1)，只保留 mask
                 # 右边 key.size(1) 部分即可。
-                d = key.size(1)
-                if mask.size(2) > d:
-                    mask = mask[:, :, -d:]
+                mask = mask[:, :, -key.size(1):]
         else:
-            key = value = xs
-        return self._attn_module.forward(query, key, value, mask)
+            key = value = query
+        return self.attn_module.attn_module.forward(query, key, value, mask)
 
     def clear_cache(self) -> None:
         self._cache = None
-
-    def set_cache_size(self, cache_size: int) -> None:
-        if cache_size == 0:
-            self.clear_cache()
-        self._cache_size = cache_size
 
 
 class MultiHeadedAttention(nn.Module):
